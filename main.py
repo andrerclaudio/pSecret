@@ -139,7 +139,7 @@ class ViewConnector:
         # Clear previous cell and draw new one
         # NOTE: This writes a space using PixelColor.BLACK; visually clears,
         # but leaves the cell's attributes as last written.
-        # self.__draw_pixel(" ", PixelColor.BLACK, old_x, old_y)
+        self.__draw_pixel(" ", PixelColor.BLACK, old_x, old_y)
         self.__draw_pixel(pixel, color, new_x, new_y)
 
         self.__cursor_x, self.__cursor_y = new_x, new_y
