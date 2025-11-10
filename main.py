@@ -12,6 +12,11 @@ import curses
 import os
 from enum import Enum
 from typing import Dict, Optional, Tuple
+import random
+import string
+
+# All printable characters except whitespace
+PRINTABLES: str = "".join(c for c in string.printable if not c.isspace())
 
 
 class PixelColor(Enum):
@@ -134,7 +139,7 @@ class ViewConnector:
         # Clear previous cell and draw new one
         # NOTE: This writes a space using PixelColor.BLACK; visually clears,
         # but leaves the cell's attributes as last written.
-        self.__draw_pixel(" ", PixelColor.BLACK, old_x, old_y)
+        # self.__draw_pixel(" ", PixelColor.BLACK, old_x, old_y)
         self.__draw_pixel(pixel, color, new_x, new_y)
 
         self.__cursor_x, self.__cursor_y = new_x, new_y
@@ -260,7 +265,9 @@ class ViewConnector:
         # Initialize color pairs and place the initial cursor
         self.__colors_init()
         self.__cursor_x, self.__cursor_y = 0, 0
-        self.__draw_pixel("A", PixelColor.BLUE, self.__cursor_x, self.__cursor_y)
+        self.__draw_pixel(
+            random.choice(PRINTABLES), PixelColor.BLUE, self.__cursor_x, self.__cursor_y
+        )
         self.stdscr.refresh()
 
         try:
@@ -269,21 +276,24 @@ class ViewConnector:
 
                 # React to terminal resizes
                 if curses.is_term_resized(self.__screen_height, self.__screen_width):
-                    self.__handle_resize("A", PixelColor.BLUE)
+                    self.__handle_resize(random.choice(PRINTABLES), PixelColor.BLUE)
 
                 # Exit on 'q' or ESC
                 if key in (ord("q"), 27):
                     break
 
+                pixel: str = random.choice(PRINTABLES)
+                color: PixelColor = random.choice(list(PixelColor))
+
                 # Movement via helper (clamped)
                 if key == curses.KEY_LEFT:
-                    self.__move_cursor("A", PixelColor.BLUE, -1, 0)
+                    self.__move_cursor(pixel, color, -1, 0)
                 elif key == curses.KEY_RIGHT:
-                    self.__move_cursor("B", PixelColor.GREEN, +1, 0)
+                    self.__move_cursor(pixel, color, +1, 0)
                 elif key == curses.KEY_UP:
-                    self.__move_cursor("C", PixelColor.YELLOW, 0, -1)
+                    self.__move_cursor(pixel, color, 0, -1)
                 elif key == curses.KEY_DOWN:
-                    self.__move_cursor("D", PixelColor.MAGENTA, 0, +1)
+                    self.__move_cursor(pixel, color, 0, +1)
 
         except KeyboardInterrupt:
             # Graceful Ctrl+C exit
