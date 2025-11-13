@@ -34,7 +34,7 @@ class PixelColor(Enum):
     MAGENTA = 5
     CYAN = 6
     WHITE = 7
-    BLACK = 8
+    # BLACK = 8
 
 
 class ViewConnector:
@@ -67,6 +67,8 @@ class ViewConnector:
         # This lets us skip redundant writes when glyph and color haven't changed.
         self.__pixel_buffer: Dict[Tuple[int, int], Tuple[str, PixelColor]] = {}
 
+        self.PULSE_TIMEOUT = 0.1
+
     @property
     def stdscr(self) -> curses.window:
         """
@@ -84,7 +86,7 @@ class ViewConnector:
 
         return self.__stdscr
 
-    def __clamp(self, x: int, y: int) -> tuple[int, int]:
+    def __clamp(self, x: int, y: int) -> Tuple[int, int]:
         """
         Clamp (x, y) to the current screen bounds.
 
@@ -93,7 +95,7 @@ class ViewConnector:
             y: Proposed row index (0-based).
 
         Returns:
-            tuple[int, int]: (x, y) adjusted to be within [0..width-1] and [0..height-1].
+            Tuple[int, int]: (x, y) adjusted to be within [0..width-1] and [0..height-1].
         """
 
         x = max(0, min(self.__screen_width - 1, x))
@@ -133,10 +135,6 @@ class ViewConnector:
         if (new_x, new_y) == (old_x, old_y):
             return
 
-        # Clear previous cell and draw new one
-        # NOTE: This writes a space using PixelColor.BLACK; visually clears,
-        # but leaves the cell's attributes as last written.
-        self.__draw_pixel(" ", PixelColor.BLACK, old_x, old_y)
         self.__draw_pixel(pixel, color, new_x, new_y)
 
         self.__cursor_x, self.__cursor_y = new_x, new_y
@@ -237,6 +235,34 @@ class ViewConnector:
         self.__draw_pixel(pixel, color, self.__cursor_x, self.__cursor_y)
         self.stdscr.refresh()
 
+    def pulse(self) -> None:
+        """Draw and immediately refresh at a given coordinate."""
+
+        pixel: str = random.choice(PRINTABLES)
+        color: PixelColor = random.choice(list(PixelColor))
+
+        x, y = self.__get_coordinates()
+
+        self.__draw_pixel(pixel, color, x, y)
+        self.stdscr.refresh()
+
+    def __get_coordinates(self) -> Tuple[int, int]:
+        """
+        Return a random (x, y) on screen, different from the current cursor
+        position if there is more than one cell available.
+        """
+
+        # If there's only one cell on the screen, we can't pick a different one.
+        if self.__screen_width * self.__screen_height <= 1:
+            return self.__cursor_x, self.__cursor_y
+
+        while True:
+            y: int = random.randrange(self.__screen_height)
+            x: int = random.randrange(self.__screen_width)
+
+            if (x, y) != (self.__cursor_x, self.__cursor_y):
+                return (x, y)
+
     def __application(self, stdscr: curses.window) -> None:
         """
         Main curses application (entry for `curses.wrapper`).
@@ -261,10 +287,6 @@ class ViewConnector:
 
         # Initialize color pairs and place the initial cursor
         self.__colors_init()
-        self.__cursor_x, self.__cursor_y = 0, 0
-        self.__draw_pixel(
-            random.choice(PRINTABLES), PixelColor.BLUE, self.__cursor_x, self.__cursor_y
-        )
         self.stdscr.refresh()
 
         try:
@@ -278,19 +300,6 @@ class ViewConnector:
                 # Exit on 'q' or ESC
                 if key in (ord("q"), 27):
                     break
-
-                pixel: str = random.choice(PRINTABLES)
-                color: PixelColor = random.choice(list(PixelColor))
-
-                # Movement via helper (clamped)
-                if key == curses.KEY_LEFT:
-                    self.__move_cursor(pixel, color, -1, 0)
-                elif key == curses.KEY_RIGHT:
-                    self.__move_cursor(pixel, color, +1, 0)
-                elif key == curses.KEY_UP:
-                    self.__move_cursor(pixel, color, 0, -1)
-                elif key == curses.KEY_DOWN:
-                    self.__move_cursor(pixel, color, 0, +1)
 
         except KeyboardInterrupt:
             # Graceful Ctrl+C exit
