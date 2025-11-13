@@ -6,8 +6,12 @@ import logging
 import os
 import random
 import string
+import threading
 from enum import Enum
 from typing import Dict, Optional, Tuple
+
+# Custom-made libraries
+from control import AppControlFlags
 
 LOG = logging.getLogger(__name__)
 
@@ -34,7 +38,6 @@ class PixelColor(Enum):
     MAGENTA = 5
     CYAN = 6
     WHITE = 7
-    # BLACK = 8
 
 
 class ViewConnector:
@@ -42,32 +45,46 @@ class ViewConnector:
     Manage screen operations using curses.
 
     Usage:
-        ViewConnector().run()
+        ViewConnector(control, condition).run()
 
     Design notes:
-    - Avoid calling `curses.initscr()` directly; use `curses.wrapper()` to ensure
-      the terminal is restored even if an exception occurs.
-    - A simple "framebuffer" (`__pixel_buffer`) caches the last drawn character
-      and color per (x, y) so unchanged cells are not rewritten (reduces flicker).
+    - Avoids calling `curses.initscr()` directly; uses `curses.wrapper()` to
+      ensure the terminal is restored even if an exception occurs.
+    - Maintains a simple "framebuffer" (`__pixel_buffer`) that caches the last
+      drawn character and color per (x, y) so unchanged cells are not rewritten.
+      This reduces flicker and unnecessary drawing.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        control: AppControlFlags,
+        condition: threading.Condition,
+    ) -> None:
         """
-        Prepare internal state. Does not touch curses until `run()`.
+        Initialize internal state without touching curses.
+
+        Curses setup (screen, colors, and input configuration) is deferred
+        to `run()`, which wraps the internal application with
+        `curses.wrapper()`.
         """
         os.environ.setdefault("TERM", "xterm-256color")
 
         self.__stdscr: Optional[curses.window] = None
         self.__screen_height: int = 0
         self.__screen_width: int = 0
-        self.__cursor_x: int = 0
-        self.__cursor_y: int = 0
+
+        # Total number of available cells on screen
+        self.__capacity: int = 0
+
+        self._control: AppControlFlags = control
+        self._condition: threading.Condition = condition
 
         # Buffer of what we've last drawn: {(x, y): (char, color)}
         # This lets us skip redundant writes when glyph and color haven't changed.
         self.__pixel_buffer: Dict[Tuple[int, int], Tuple[str, PixelColor]] = {}
 
-        self.PULSE_TIMEOUT = 0.1
+        # Interval used by background jobs to control pulse frequency.
+        self.PULSE_TIMEOUT = 0.001
 
     @property
     def stdscr(self) -> curses.window:
@@ -86,59 +103,49 @@ class ViewConnector:
 
         return self.__stdscr
 
-    def __clamp(self, x: int, y: int) -> Tuple[int, int]:
+    def __view_is_ready(self, flag: bool) -> None:
         """
-        Clamp (x, y) to the current screen bounds.
+        Update the shared 'view ready' flag.
 
         Args:
-            x: Proposed column index (0-based).
-            y: Proposed row index (0-based).
-
-        Returns:
-            Tuple[int, int]: (x, y) adjusted to be within [0..width-1] and [0..height-1].
+            flag: True when the curses view is fully initialized and safe
+                to use, False when it is being created or shut down.
         """
+        with self._condition:
+            self._control.view_ready = flag
 
-        x = max(0, min(self.__screen_width - 1, x))
-        y = max(0, min(self.__screen_height - 1, y))
-
-        return x, y
-
-    def __move_cursor(self, pixel: str, color: PixelColor, dx: int, dy: int) -> None:
+    def __get_color(self) -> PixelColor:
         """
-        Move the demo cursor by (dx, dy), clamped to the screen, then redraw it
-        using the given glyph (`pixel`) and color.
+        Return a randomly chosen PixelColor value.
 
-        The previous cell is cleared *visually* by drawing a space (with BLACK),
-        and the new position is drawn with the specified glyph/color. The screen
-        is refreshed at the end.
-
-        Args:
-            pixel: Single-character, printable glyph to draw at the new position.
-            color: Color pair (from PixelColor) used to draw the glyph.
-            dx: Delta applied to the current x (columns).
-            dy: Delta applied to the current y (rows).
-
-        Note:
-            This "clear" does not fully reset terminal attributes to defaults; it
-            replaces the glyph with a space using a color pair.
+        Used to give each new pixel a random color pair.
         """
+        return random.choice(list(PixelColor))
 
-        old_x: int
-        old_y: int
-        new_x: int
-        new_y: int
+    def __get_pixel(self) -> str:
+        """
+        Return a single randomly chosen printable character.
 
-        old_x, old_y = self.__cursor_x, self.__cursor_y
-        new_x, new_y = self.__clamp(old_x + dx, old_y + dy)
+        The character is selected from ASCII printable characters that
+        are not whitespace.
+        """
+        return random.choice(PRINTABLES)
 
-        # No-op if the clamped position did not change
-        if (new_x, new_y) == (old_x, old_y):
-            return
+    def __get_coordinates(self) -> Tuple[int, int]:
+        """
+        Return a random (x, y) coordinate on the screen.
 
-        self.__draw_pixel(pixel, color, new_x, new_y)
+        When possible, it prefers coordinates that have not yet been used
+        in the current pixel buffer, so every cell is visited before the
+        screen is cleared.
+        """
+        while True:
+            y: int = random.randrange(self.__screen_height)
+            x: int = random.randrange(self.__screen_width)
 
-        self.__cursor_x, self.__cursor_y = new_x, new_y
-        self.stdscr.refresh()
+            key: Tuple[int, int] = (x, y)
+            if key not in self.__pixel_buffer:
+                return (x, y)
 
     def __draw_pixel(self, pixel: str, color: PixelColor, x: int, y: int) -> None:
         """
@@ -153,7 +160,8 @@ class ViewConnector:
         Behavior:
             - Out-of-bounds writes are ignored.
             - Non-printable or multi-character strings are ignored.
-            - If (char, color) matches the cached value for (x, y), the write is skipped.
+            - If the coordinate is already in the pixel buffer, the write
+              is skipped to avoid overwriting existing pixels.
         """
 
         # Bounds check
@@ -165,10 +173,8 @@ class ViewConnector:
             return
 
         key: Tuple[int, int] = (x, y)
-        prev: Optional[Tuple[str, PixelColor]] = self.__pixel_buffer.get(key)
-
-        if prev == (pixel, color):
-            return  # Nothing changed: avoid redundant write
+        if key in self.__pixel_buffer:
+            return  # this coordinate was already taken
 
         # Calculate attributes and draw
         attrs: int = curses.color_pair(color.value)
@@ -182,11 +188,12 @@ class ViewConnector:
 
     def __colors_init(self) -> None:
         """
-        Initialize curses color pairs.
+        Initialize curses color pairs based on the PixelColor enum.
 
-        Each PixelColor value is used as the color-pair ID, with foreground color
-        taken from its name (e.g., PixelColor.RED -> curses.COLOR_RED).
-        Background is set to -1 (use terminal default) for better theme compatibility.
+        Each PixelColor value is used as the color-pair ID, with the
+        foreground color taken from its name (e.g., PixelColor.RED ->
+        curses.COLOR_RED). The background is set to -1 (use terminal
+        default) for better theme compatibility.
 
         Raises:
             curses.error: If the terminal does not support colors.
@@ -195,7 +202,7 @@ class ViewConnector:
         curses.start_color()
         curses.use_default_colors()
 
-        # Verify terminal supports colors;
+        # Verify terminal supports colors
         if not curses.has_colors():
             raise curses.error("Terminal does not support colors.")
 
@@ -209,75 +216,46 @@ class ViewConnector:
             # Pair number = enum value (1..n). Background = -1 (default).
             curses.init_pair(color.value, fg, -1)
 
-    def __handle_resize(self, pixel: str, color: PixelColor) -> None:
+    def __handle_resize(self) -> None:
         """
-        Handle terminal resize.
+        Handle terminal resize events.
 
-        - Updates internal width/height.
+        - Updates the cached screen width/height.
         - Clears the screen and the local pixel buffer.
-        - Clamps the cursor into the new bounds.
-        - Redraws the cursor with the specified glyph/color.
-        - Refreshes the display.
-
-        Args:
-            pixel: Glyph to redraw at the (possibly clamped) cursor position.
-            color: Color with which to redraw the glyph.
+        - Draws a new random pixel on the resized screen.
+        - Refreshes the display after the redraw.
         """
 
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
+        self.__capacity = self.__screen_width * self.__screen_height
         self.stdscr.clear()
         self.__pixel_buffer.clear()
 
-        # Keep the cursor in-bounds and redraw it after clearing
-        self.__cursor_x, self.__cursor_y = self.__clamp(
-            self.__cursor_x, self.__cursor_y
-        )
-        self.__draw_pixel(pixel, color, self.__cursor_x, self.__cursor_y)
-        self.stdscr.refresh()
-
-    def pulse(self) -> None:
-        """Draw and immediately refresh at a given coordinate."""
-
-        pixel: str = random.choice(PRINTABLES)
-        color: PixelColor = random.choice(list(PixelColor))
-
         x, y = self.__get_coordinates()
+        pixel: str = self.__get_pixel()
+        color: PixelColor = self.__get_color()
 
         self.__draw_pixel(pixel, color, x, y)
         self.stdscr.refresh()
-
-    def __get_coordinates(self) -> Tuple[int, int]:
-        """
-        Return a random (x, y) on screen, different from the current cursor
-        position if there is more than one cell available.
-        """
-
-        # If there's only one cell on the screen, we can't pick a different one.
-        if self.__screen_width * self.__screen_height <= 1:
-            return self.__cursor_x, self.__cursor_y
-
-        while True:
-            y: int = random.randrange(self.__screen_height)
-            x: int = random.randrange(self.__screen_width)
-
-            if (x, y) != (self.__cursor_x, self.__cursor_y):
-                return (x, y)
 
     def __application(self, stdscr: curses.window) -> None:
         """
         Main curses application (entry for `curses.wrapper`).
 
-        Controls:
-            - Arrow keys move the cursor.
-            - This demo uses different glyph/color per direction.
-            - 'q' or ESC exits the application.
+        Behaviour:
+            - Initializes the curses environment and color pairs.
+            - Waits for key presses in a loop.
+            - Reacts to terminal resizes by redrawing the screen.
+            - Exits when 'q' or ESC is pressed.
 
-        The function owns curses state until it returns; wrapper restores terminal
-        modes afterwards even if an exception bubbles up.
+        The function owns curses state until it returns; `curses.wrapper`
+        restores terminal modes afterwards even if an exception bubbles up.
         """
+
         # Bind the stdscr provided by wrapper and initialize state
         self.__stdscr = stdscr
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
+        self.__capacity = self.__screen_width * self.__screen_height
 
         # Setup terminal behavior
         curses.curs_set(0)  # Hide cursor (may raise on some terminals)
@@ -289,13 +267,15 @@ class ViewConnector:
         self.__colors_init()
         self.stdscr.refresh()
 
+        self.__view_is_ready(True)
+
         try:
             while True:
                 key: int = self.stdscr.getch()
 
                 # React to terminal resizes
                 if curses.is_term_resized(self.__screen_height, self.__screen_width):
-                    self.__handle_resize(random.choice(PRINTABLES), PixelColor.BLUE)
+                    self.__handle_resize()
 
                 # Exit on 'q' or ESC
                 if key in (ord("q"), 27):
@@ -312,11 +292,11 @@ class ViewConnector:
 
     def run(self) -> None:
         """
-        Entrypoint: wrap the application to ensure proper terminal teardown.
+        Entry point: wrap the application to ensure proper terminal teardown.
 
         Raises:
             SystemExit: Exits with code 1 if curses fails to initialize
-                        (e.g., unsupported TERM, not a TTY, or no color support).
+                (e.g., unsupported TERM, not a TTY, or no color support).
         """
 
         try:
@@ -326,3 +306,31 @@ class ViewConnector:
             # Common causes: TERM is unsupported, not a real TTY, or no color support.
             LOG.error(f"[curses] initialization error: {exc}")
             raise SystemExit(1)
+
+    def pulse(self) -> None:
+        """
+        Draw a single random pixel and immediately refresh the screen.
+
+        When all screen positions have been used once (pixel buffer full),
+        the screen is cleared, the buffer is reset, and the process starts over.
+        """
+
+        if self.__stdscr is None:
+            raise RuntimeError("stdscr not initialized; call run() first.")
+
+        # Check if there is space
+        if self.__capacity > 0:
+            # If we've already drawn to every cell
+            used = len(self.__pixel_buffer)
+            if used >= self.__capacity:
+                # Reset screen and buffer and start over
+                self.stdscr.clear()
+                self.__pixel_buffer.clear()
+                self.stdscr.refresh()
+
+            x, y = self.__get_coordinates()
+            pixel: str = self.__get_pixel()
+            color: PixelColor = self.__get_color()
+
+            self.__draw_pixel(pixel, color, x, y)
+            self.stdscr.refresh()
