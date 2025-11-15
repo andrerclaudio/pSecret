@@ -84,7 +84,7 @@ class ViewConnector:
         self.__pixel_buffer: Dict[Tuple[int, int], Tuple[str, PixelColor]] = {}
 
         # Interval used by background jobs to control pulse frequency.
-        self.PULSE_TIMEOUT = 0.001
+        self.PULSE_TIMEOUT = 0.1
 
     @property
     def stdscr(self) -> curses.window:
@@ -180,11 +180,13 @@ class ViewConnector:
         attrs: int = curses.color_pair(color.value)
 
         try:
-            self.stdscr.addch(y, x, pixel, attrs)
             self.__pixel_buffer[key] = (pixel, color)
+            self.stdscr.addch(y, x, pixel, attrs)
         except curses.error:
-            # Drop cache entry to be safe.
-            self.__pixel_buffer.pop(key, None)
+            # Bottom-right corner, which is a classic curses trouble spot
+            if (x, y) != (self.__screen_width - 1, self.__screen_height - 1):
+                # Drop cache entry to be safe.
+                self.__pixel_buffer.pop(key, None)
 
     def __colors_init(self) -> None:
         """
@@ -226,17 +228,14 @@ class ViewConnector:
         - Refreshes the display after the redraw.
         """
 
+        self.__view_is_ready(False)
+
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
         self.__capacity = self.__screen_width * self.__screen_height
         self.stdscr.clear()
         self.__pixel_buffer.clear()
 
-        x, y = self.__get_coordinates()
-        pixel: str = self.__get_pixel()
-        color: PixelColor = self.__get_color()
-
-        self.__draw_pixel(pixel, color, x, y)
-        self.stdscr.refresh()
+        self.__view_is_ready(True)
 
     def __application(self, stdscr: curses.window) -> None:
         """
@@ -286,6 +285,8 @@ class ViewConnector:
             pass
 
         finally:
+            # Avoit new entries befire we clean the whole screen
+            self.__view_is_ready(False)
             # Restore a clean screen before wrapper restores terminal modes
             self.stdscr.clear()
             self.stdscr.refresh()
