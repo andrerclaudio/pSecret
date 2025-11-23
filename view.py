@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple
 
 # Custom-made libraries
 from control import AppControlFlags
+from layout import LayoutManager
 
 LOG = logging.getLogger(__name__)
 
@@ -85,6 +86,11 @@ class ViewConnector:
 
         # Interval used by background jobs to control pulse frequency.
         self.PULSE_TIMEOUT = 0.1
+
+        # Set the domint color for layout objects
+        self.__dominant_colors = PixelColor.GREEN
+        # Initialize th layout Manager
+        self._layout = LayoutManager()
 
     @property
     def stdscr(self) -> curses.window:
@@ -188,6 +194,54 @@ class ViewConnector:
                 # Drop cache entry to be safe.
                 self.__pixel_buffer.pop(key, None)
 
+    def __draw_text_block(
+        self,
+        text: str,
+        color: PixelColor,
+        origin_x: int,
+        origin_y: int,
+    ) -> None:
+        """
+        Draw a multi-line text block starting at (origin_x, origin_y).
+        Newlines in `text` move to the next row and reset X to origin_x.
+        """
+
+        x = origin_x
+        y = origin_y
+
+        for ch in text:
+            if not ch.isprintable():
+                y += 1
+                x = origin_x
+                continue
+
+            self.__draw_pixel(
+                pixel=ch,
+                color=color,
+                x=x,
+                y=y,
+            )
+            x += 1
+
+    def __draw_layout(self) -> None:
+        """
+        Ask LayoutManager to compute the layout and draw all blocks.
+        """
+        blocks = self._layout.build_layout(
+            screen_width=self.__screen_width,
+            screen_height=self.__screen_height,
+        )
+
+        for block in blocks:
+            self.__draw_text_block(
+                text=block.text,
+                color=self.__dominant_colors,
+                origin_x=block.origin_x,
+                origin_y=block.origin_y,
+            )
+
+        self.stdscr.refresh()
+
     def __colors_init(self) -> None:
         """
         Initialize curses color pairs based on the PixelColor enum.
@@ -235,7 +289,9 @@ class ViewConnector:
         self.stdscr.clear()
         self.__pixel_buffer.clear()
 
-        self.__view_is_ready(True)
+        self.__draw_layout()
+
+        # self.__view_is_ready(True)
 
     def __application(self, stdscr: curses.window) -> None:
         """
@@ -256,6 +312,8 @@ class ViewConnector:
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
         self.__capacity = self.__screen_width * self.__screen_height
 
+        # TODO: Check min. screen size before proceed
+
         # Setup terminal behavior
         curses.curs_set(0)  # Hide cursor (may raise on some terminals)
         self.stdscr.keypad(True)  # Enable keypad so arrow keys/ESC are decoded
@@ -266,7 +324,9 @@ class ViewConnector:
         self.__colors_init()
         self.stdscr.refresh()
 
-        self.__view_is_ready(True)
+        self.__draw_layout()
+
+        # self.__view_is_ready(True)
 
         try:
             while True:

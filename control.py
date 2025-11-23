@@ -15,7 +15,7 @@ class AppControlFlags:
 
     def __init__(self) -> None:
         self._keep_running: bool = True
-        self._view_ready: bool = True
+        self._view_ready: bool = False
 
     @property
     def keep_running(self) -> bool:
