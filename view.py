@@ -242,6 +242,30 @@ class ViewConnector:
 
         self.stdscr.refresh()
 
+    def __print_error_msg(self) -> None:
+        """
+        Render a simple error message when the terminal is too small.
+        """
+        error_blocks = self._layout.build_small_screen_error_layout(
+            screen_width=self.__screen_width,
+            screen_height=self.__screen_height,
+        )
+
+        attrs = curses.color_pair(self.__dominant_colors.value)
+
+        for block in error_blocks:
+            try:
+                self.stdscr.addstr(
+                    block.origin_y,
+                    block.origin_x,
+                    block.text,
+                    attrs,
+                )
+            except curses.error:
+                pass  # ignore bottom-right curses glitch
+
+        self.stdscr.refresh()
+
     def __colors_init(self) -> None:
         """
         Initialize curses color pairs based on the PixelColor enum.
@@ -276,10 +300,11 @@ class ViewConnector:
         """
         Handle terminal resize events.
 
-        - Updates the cached screen width/height.
-        - Clears the screen and the local pixel buffer.
-        - Draws a new random pixel on the resized screen.
-        - Refreshes the display after the redraw.
+        - Updates the cached screen width/height and capacity.
+        - Clears the screen and local pixel buffer.
+        - Re-evaluates whether the standard layout still fits:
+            - If it fits, redraws the full layout.
+            - Otherwise, prints the small-screen error message.
         """
 
         self.__view_is_ready(False)
@@ -289,9 +314,11 @@ class ViewConnector:
         self.stdscr.clear()
         self.__pixel_buffer.clear()
 
-        self.__draw_layout()
-
-        # self.__view_is_ready(True)
+        # Check if the layout fits in the current terminal
+        if self._layout.check_fit(self.__screen_width, self.__screen_height):
+            self.__draw_layout()
+        else:
+            self.__print_error_msg()
 
     def __application(self, stdscr: curses.window) -> None:
         """
@@ -299,8 +326,11 @@ class ViewConnector:
 
         Behaviour:
             - Initializes the curses environment and color pairs.
+            - Checks if the layout fits; if not, shows a centered error
+              message instead of the full layout.
             - Waits for key presses in a loop.
-            - Reacts to terminal resizes by redrawing the screen.
+            - Reacts to terminal resizes by redrawing the screen or the
+              error message as needed.
             - Exits when 'q' or ESC is pressed.
 
         The function owns curses state until it returns; `curses.wrapper`
@@ -312,8 +342,6 @@ class ViewConnector:
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
         self.__capacity = self.__screen_width * self.__screen_height
 
-        # TODO: Check min. screen size before proceed
-
         # Setup terminal behavior
         curses.curs_set(0)  # Hide cursor (may raise on some terminals)
         self.stdscr.keypad(True)  # Enable keypad so arrow keys/ESC are decoded
@@ -324,9 +352,11 @@ class ViewConnector:
         self.__colors_init()
         self.stdscr.refresh()
 
-        self.__draw_layout()
-
-        # self.__view_is_ready(True)
+        # Check if the layout fits in the current terminal
+        if self._layout.check_fit(self.__screen_width, self.__screen_height):
+            self.__draw_layout()
+        else:
+            self.__print_error_msg()
 
         try:
             while True:
