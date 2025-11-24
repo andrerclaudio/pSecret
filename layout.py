@@ -3,33 +3,34 @@ from __future__ import annotations
 # Built-in libraries
 from dataclasses import dataclass
 from typing import List, Tuple
+from enum import Enum
 
 BOX_STATUS: str = (
-    "┌──                                    STATUS                                    ──┐\n"
-    "│                                                                                  │\n"
-    "│ Cluster                                                                          │\n"
-    "│                                                                                  │\n"
-    "│                              Elapsed Time  00:00:00                              │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "└──────────────────────────────────────────────────────────────────────────────────┘\n"
+    "┌──                                STATUS                                ──┐\n"
+    "│                                                                          │\n"
+    "│ Cluster                                                                  │\n"
+    "│ ········································································ │\n"
+    "│                          Elapsed Time  00:00:00                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "└──────────────────────────────────────────────────────────────────────────┘\n"
 )
 
 BOX_INFORMATION: str = (
-    "┌──────────────────────────────────────────────────────────────────────────────────┐\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "└──────────────────────────────────────────────────────────────────────────────────┘\n"
+    "┌──────────────────────────────────────────────────────────────────────────┐\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "│                                                                          │\n"
+    "└──────────────────────────────────────────────────────────────────────────┘\n"
 )
 
 TOP_GAP: int = 1
@@ -37,19 +38,34 @@ BOTTON_GAP: int = 1
 SIDE_GAP: int = 1
 VERTICAL_MIDDLE_GAP: int = 2
 
+CLUSTER_COUNT_ORIGIN_X_DELTA = 10
+CLUSTER_COUNT_ORIGIN_Y_DELTA = 2
+
+PERCENTAGE_BAR_ORIGIN_X_DELTA = 2
+PERCENTAGE_BAR_ORIGIN_Y_DELTA = 3
+
+
+class BoxKind(Enum):
+    BOX_STATUS = 1
+    BOX_INFORMATION = 2
+    BOX_DEFRAG = 3
+    BOX_SMALL_SCREEN_ERROR = 4
+
 
 @dataclass(frozen=True)
 class TextBlock:
     """
     Logical description of a text block to be drawn on screen.
 
-    `text` is a multi-line ASCII block (may end with '\n').
+    `text` is a multi-line ASCII block.
     `origin_x` and `origin_y` are 0-based column/row positions.
+    `kind` identifies which logical box this is.
     """
 
     text: str
     origin_x: int
     origin_y: int
+    kind: BoxKind
 
 
 class LayoutManager:
@@ -233,6 +249,7 @@ class LayoutManager:
                 text=message,
                 origin_x=origin_x,
                 origin_y=origin_y,
+                kind=BoxKind.BOX_SMALL_SCREEN_ERROR,
             )
         ]
 
@@ -263,14 +280,11 @@ class LayoutManager:
         """
         blocks: List[TextBlock] = []
 
-        # 1) Measure bottom boxes
         box_status_width, box_status_height = self.measure_text_block(self._box_status)
         box_information_width, _ = self.measure_text_block(self._box_information)
 
-        # 2) Vertical placement of status / information boxes
         boxes_y_position: int = screen_height - (box_status_height + self._bottom_gap)
 
-        # 3) Horizontal positions for the two boxes
         (box_status_x_position, box_information_x_position, gap_between_boxes_width) = (
             self.__compute_two_box_positions(
                 screen_width=screen_width,
@@ -279,7 +293,6 @@ class LayoutManager:
             )
         )
 
-        # 4) Defrag box dimensions (big top box)
         box_defrag_width: int = (
             box_status_width + gap_between_boxes_width + box_information_width
         )
@@ -293,13 +306,13 @@ class LayoutManager:
             height=box_defrag_height,
         )
 
-        # 5) Pack everything as TextBlock objects
         # Defrag box (top)
         blocks.append(
             TextBlock(
                 text=box_defrag,
                 origin_x=box_status_x_position,
                 origin_y=self._top_gap,
+                kind=BoxKind.BOX_DEFRAG,
             )
         )
 
@@ -309,6 +322,7 @@ class LayoutManager:
                 text=self._box_status,
                 origin_x=box_status_x_position,
                 origin_y=boxes_y_position,
+                kind=BoxKind.BOX_STATUS,
             )
         )
 
@@ -318,6 +332,7 @@ class LayoutManager:
                 text=self._box_information,
                 origin_x=box_information_x_position,
                 origin_y=boxes_y_position,
+                kind=BoxKind.BOX_INFORMATION,
             )
         )
 

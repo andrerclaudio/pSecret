@@ -6,13 +6,21 @@ import logging
 import os
 import random
 import string
+import math
 import threading
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
 # Custom-made libraries
 from control import AppControlFlags
-from layout import LayoutManager
+from layout import (
+    CLUSTER_COUNT_ORIGIN_X_DELTA,
+    CLUSTER_COUNT_ORIGIN_Y_DELTA,
+    PERCENTAGE_BAR_ORIGIN_X_DELTA,
+    PERCENTAGE_BAR_ORIGIN_Y_DELTA,
+    BoxKind,
+    LayoutManager,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -90,7 +98,20 @@ class ViewConnector:
         # Set the domint color for layout objects
         self.__dominant_colors = PixelColor.WHITE
         # Initialize th layout Manager
-        self._layout = LayoutManager()
+        self.__layout = LayoutManager()
+
+        #
+        self.__defrag_start_x: int = 0
+        self.__defrag_start_y: int = 0
+        self.__defrag_end_x: int = 0
+        self.__defrag_end_y: int = 0
+
+        self.__status_cluster_counter_start_x: int = 0
+        self.__status_cluster_counter_start_y: int = 0
+        self.cluster_counter: int = 0
+
+        self.__status_percentage_bar_start_x: int = 0
+        self.__status_percentage_bar_start_y: int = 0
 
     @property
     def stdscr(self) -> curses.window:
@@ -146,8 +167,8 @@ class ViewConnector:
         screen is cleared.
         """
         while True:
-            y: int = random.randrange(self.__screen_height)
-            x: int = random.randrange(self.__screen_width)
+            y: int = random.randrange(self.__defrag_start_y, self.__defrag_end_y)
+            x: int = random.randrange(self.__defrag_start_x, self.__defrag_end_x)
 
             key: Tuple[int, int] = (x, y)
             if key not in self.__pixel_buffer:
@@ -186,7 +207,9 @@ class ViewConnector:
         attrs: int = curses.color_pair(color.value)
 
         try:
-            self.__pixel_buffer[key] = (pixel, color)
+            # Do not add it in the buffer if it is just SPACE character
+            if pixel != " ":
+                self.__pixel_buffer[key] = (pixel, color)
             self.stdscr.addch(y, x, pixel, attrs)
         except curses.error:
             # Bottom-right corner, which is a classic curses trouble spot
@@ -200,6 +223,7 @@ class ViewConnector:
         color: PixelColor,
         origin_x: int,
         origin_y: int,
+        box: BoxKind,
     ) -> None:
         """
         Draw a multi-line text block starting at (origin_x, origin_y).
@@ -209,9 +233,23 @@ class ViewConnector:
         x = origin_x
         y = origin_y
 
+        #
+        if box == BoxKind.BOX_DEFRAG:
+            self.__defrag_start_x = x + 1
+            self.__defrag_start_y = y + 1
+
+        if box == BoxKind.BOX_STATUS:
+            self.__status_cluster_counter_start_x = x + CLUSTER_COUNT_ORIGIN_X_DELTA
+            self.__status_cluster_counter_start_y = y + CLUSTER_COUNT_ORIGIN_Y_DELTA
+            self.__status_percentage_bar_start_x = x + PERCENTAGE_BAR_ORIGIN_X_DELTA
+            self.__status_percentage_bar_start_y = y + PERCENTAGE_BAR_ORIGIN_Y_DELTA
+
         for ch in text:
             if not ch.isprintable():
                 y += 1
+                if box == BoxKind.BOX_DEFRAG:
+                    #
+                    self.__defrag_end_y = y
                 x = origin_x
                 continue
 
@@ -222,12 +260,15 @@ class ViewConnector:
                 y=y,
             )
             x += 1
+            if box == BoxKind.BOX_DEFRAG:
+                #
+                self.__defrag_end_x = x
 
     def __draw_layout(self) -> None:
         """
         Ask LayoutManager to compute the layout and draw all blocks.
         """
-        blocks = self._layout.build_layout(
+        blocks = self.__layout.build_layout(
             screen_width=self.__screen_width,
             screen_height=self.__screen_height,
         )
@@ -238,15 +279,19 @@ class ViewConnector:
                 color=self.__dominant_colors,
                 origin_x=block.origin_x,
                 origin_y=block.origin_y,
+                box=block.kind,
             )
 
+        self.__capacity = (self.__defrag_end_x - self.__defrag_start_x) * (
+            self.__defrag_end_y - self.__defrag_start_y
+        )
         self.stdscr.refresh()
 
     def __print_error_msg(self) -> None:
         """
         Render a simple error message when the terminal is too small.
         """
-        error_blocks = self._layout.build_small_screen_error_layout(
+        error_blocks = self.__layout.build_small_screen_error_layout(
             screen_width=self.__screen_width,
             screen_height=self.__screen_height,
         )
@@ -310,13 +355,14 @@ class ViewConnector:
         self.__view_is_ready(False)
 
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
-        self.__capacity = self.__screen_width * self.__screen_height
         self.stdscr.clear()
         self.__pixel_buffer.clear()
+        self.cluster_counter = 0
 
         # Check if the layout fits in the current terminal
-        if self._layout.check_fit(self.__screen_width, self.__screen_height):
+        if self.__layout.check_fit(self.__screen_width, self.__screen_height):
             self.__draw_layout()
+            self.__view_is_ready(True)
         else:
             self.__print_error_msg()
 
@@ -340,7 +386,6 @@ class ViewConnector:
         # Bind the stdscr provided by wrapper and initialize state
         self.__stdscr = stdscr
         self.__screen_height, self.__screen_width = self.stdscr.getmaxyx()
-        self.__capacity = self.__screen_width * self.__screen_height
 
         # Setup terminal behavior
         curses.curs_set(0)  # Hide cursor (may raise on some terminals)
@@ -353,8 +398,9 @@ class ViewConnector:
         self.stdscr.refresh()
 
         # Check if the layout fits in the current terminal
-        if self._layout.check_fit(self.__screen_width, self.__screen_height):
+        if self.__layout.check_fit(self.__screen_width, self.__screen_height):
             self.__draw_layout()
+            self.__view_is_ready(True)
         else:
             self.__print_error_msg()
 
@@ -409,19 +455,33 @@ class ViewConnector:
         if self.__stdscr is None:
             raise RuntimeError("stdscr not initialized; call run() first.")
 
-        # Check if there is space
-        if self.__capacity > 0:
-            # If we've already drawn to every cell
-            used = len(self.__pixel_buffer)
-            if used >= self.__capacity:
-                # Reset screen and buffer and start over
-                self.stdscr.clear()
-                self.__pixel_buffer.clear()
-                self.stdscr.refresh()
+        # If we've already drawn to every cell
+        if self.cluster_counter >= self.__capacity:
+            # TODO: What to do next?
+            self.__view_is_ready(False)
 
-            x, y = self.__get_coordinates()
-            pixel: str = self.__get_pixel()
-            color: PixelColor = self.__get_color()
+        x, y = self.__get_coordinates()
+        pixel: str = self.__get_pixel()
+        color: PixelColor = self.__get_color()
 
-            self.__draw_pixel(pixel, color, x, y)
-            self.stdscr.refresh()
+        self.__draw_pixel(pixel, color, x, y)
+        self.cluster_counter += 1
+
+        self.stdscr.addstr(
+            self.__status_cluster_counter_start_y,
+            self.__status_cluster_counter_start_x,
+            f"{self.cluster_counter:06d}",
+            curses.color_pair(self.__dominant_colors.value),
+        )
+
+        if self.cluster_counter % math.ceil(self.__capacity // 72) == 0:
+            self.stdscr.addstr(
+                self.__status_percentage_bar_start_y,
+                self.__status_percentage_bar_start_x,
+                "▓",
+                curses.color_pair(self.__dominant_colors.value),
+            )
+
+            self.__status_percentage_bar_start_x += 1
+
+        self.stdscr.refresh()
