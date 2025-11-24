@@ -88,7 +88,7 @@ class ViewConnector:
         self.PULSE_TIMEOUT = 0.1
 
         # Set the domint color for layout objects
-        self.__dominant_colors = PixelColor.GREEN
+        self.__dominant_colors = PixelColor.WHITE
         # Initialize th layout Manager
         self._layout = LayoutManager()
 

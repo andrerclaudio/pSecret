@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 BOX_STATUS: str = (
-    "┌────────────────────────────────      STATUS      ────────────────────────────────┐\n"
+    "┌──                                    STATUS                                    ──┐\n"
     "│                                                                                  │\n"
+    "│ Cluster                                                                          │\n"
     "│                                                                                  │\n"
-    "│                                                                                  │\n"
-    "│                                                                                  │\n"
+    "│                              Elapsed Time  00:00:00                              │\n"
     "│                                                                                  │\n"
     "│                                                                                  │\n"
     "│                                                                                  │\n"
