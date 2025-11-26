@@ -6,7 +6,6 @@ import logging
 import os
 import random
 import string
-import math
 import threading
 from enum import Enum
 from typing import Dict, Optional, Tuple
@@ -112,6 +111,7 @@ class ViewConnector:
 
         self.__status_percentage_bar_start_x: int = 0
         self.__status_percentage_bar_start_y: int = 0
+        self.__status_percentage_bar_blocks_added: int = 0
 
     @property
     def stdscr(self) -> curses.window:
@@ -246,10 +246,11 @@ class ViewConnector:
 
         for ch in text:
             if not ch.isprintable():
-                y += 1
                 if box == BoxKind.BOX_DEFRAG:
                     #
                     self.__defrag_end_y = y
+
+                y += 1
                 x = origin_x
                 continue
 
@@ -259,10 +260,12 @@ class ViewConnector:
                 x=x,
                 y=y,
             )
-            x += 1
+
             if box == BoxKind.BOX_DEFRAG:
                 #
                 self.__defrag_end_x = x
+
+            x += 1
 
     def __draw_layout(self) -> None:
         """
@@ -474,14 +477,32 @@ class ViewConnector:
             curses.color_pair(self.__dominant_colors.value),
         )
 
-        if self.cluster_counter % math.ceil(self.__capacity // 72) == 0:
+        self._update_progress_bar()
+
+        self.stdscr.refresh()
+
+    def _update_progress_bar(self) -> None:
+        # Clamp cluster_counter so we never go past 100%
+        progress = min(self.cluster_counter, self.__capacity) / self.__capacity
+
+        BAR_WIDTH = 72  # width of the bar in characters
+
+        # Target number of blocks that *should* be filled now
+        target_blocks = int(progress * BAR_WIDTH)
+
+        # How many blocks we have already drawn
+        current_blocks = self.__status_percentage_bar_blocks_added
+
+        # Draw until the visual bar catches up with the logical progress
+        while current_blocks < target_blocks and current_blocks < BAR_WIDTH:
+            x = self.__status_percentage_bar_start_x + current_blocks
+
             self.stdscr.addstr(
                 self.__status_percentage_bar_start_y,
-                self.__status_percentage_bar_start_x,
+                x,
                 "▓",
                 curses.color_pair(self.__dominant_colors.value),
             )
 
-            self.__status_percentage_bar_start_x += 1
-
-        self.stdscr.refresh()
+            current_blocks += 1
+            self.__status_percentage_bar_blocks_added = current_blocks
