@@ -104,7 +104,7 @@ class LayoutManager:
         lines = text.splitlines()
 
         if not lines:
-            return (0, 0)
+            return 0, 0
 
         height = len(lines)
         width = max(len(line) for line in lines)
@@ -217,8 +217,8 @@ class LayoutManager:
 
         return True
 
+    @staticmethod
     def build_small_screen_error_layout(
-        self,
         screen_width: int,
         screen_height: int,
     ) -> List[TextBlock]:

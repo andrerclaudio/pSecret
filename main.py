@@ -60,7 +60,7 @@ if __name__ == "__main__":
         view.run()
 
         with condition_flag:
-            # Release the resouces
+            # Release the resources
             app_control_flags.keep_running = False
 
         # Keep the main thread running until the application is stopped

@@ -30,7 +30,7 @@ PRINTABLES: str = "".join(c for c in string.printable if not c.isspace())
 
 class PixelColor(Enum):
     """
-    Logical color names mapped to *pair IDs* (1..n) for curses color pairs.
+    Logical color names mapped to *pair IDs* (1...n) for curses color pairs.
 
     The enum value is the color pair ID. Each ID is initialized so that the
     foreground color comes from the enum name (e.g., BLUE -> curses.COLOR_BLUE)
@@ -94,7 +94,7 @@ class ViewConnector:
         # Interval used by background jobs to control pulse frequency.
         self.PULSE_TIMEOUT = 0.1
 
-        # Set the domint color for layout objects
+        # Set the dominant color for layout objects
         self.__dominant_colors = PixelColor.WHITE
         # Initialize th layout Manager
         self.__layout = LayoutManager()
@@ -141,7 +141,8 @@ class ViewConnector:
         with self._condition:
             self._control.view_ready = flag
 
-    def __get_color(self) -> PixelColor:
+    @staticmethod
+    def __get_color() -> PixelColor:
         """
         Return a randomly chosen PixelColor value.
 
@@ -149,7 +150,8 @@ class ViewConnector:
         """
         return random.choice(list(PixelColor))
 
-    def __get_pixel(self) -> str:
+    @staticmethod
+    def __get_pixel() -> str:
         """
         Return a single randomly chosen printable character.
 
@@ -172,7 +174,7 @@ class ViewConnector:
 
             key: Tuple[int, int] = (x, y)
             if key not in self.__pixel_buffer:
-                return (x, y)
+                return x, y
 
     def __draw_pixel(self, pixel: str, color: PixelColor, x: int, y: int) -> None:
         """
@@ -314,7 +316,8 @@ class ViewConnector:
 
         self.stdscr.refresh()
 
-    def __colors_init(self) -> None:
+    @staticmethod
+    def __colors_init() -> None:
         """
         Initialize curses color pairs based on the PixelColor enum.
 
@@ -383,7 +386,7 @@ class ViewConnector:
             - Exits when 'q' or ESC is pressed.
 
         The function owns curses state until it returns; `curses.wrapper`
-        restores terminal modes afterwards even if an exception bubbles up.
+        restores terminal modes afterward even if an exception bubbles up.
         """
 
         # Bind the stdscr provided by wrapper and initialize state
@@ -424,7 +427,7 @@ class ViewConnector:
             pass
 
         finally:
-            # Avoit new entries befire we clean the whole screen
+            # Avoid new entries before we clean the whole screen
             self.__view_is_ready(False)
             # Restore a clean screen before wrapper restores terminal modes
             self.stdscr.clear()
