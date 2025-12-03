@@ -64,7 +64,7 @@ class CursesRenderer:
         self.DRAW_INTERVAL: float = 0.05
 
         # Minimum screen area (width * height) required to run
-        self.MIN_SCREEN_AREA = 4
+        self._MIN_SCREEN_AREA = 4
 
     @property
     def stdscr(self) -> curses.window:
@@ -163,7 +163,18 @@ class CursesRenderer:
 
     def _check_fit(self) -> bool:
         """Validates if the screen is large enough to run."""
-        return self._capacity > self.MIN_SCREEN_AREA
+        return self._capacity > self._MIN_SCREEN_AREA
+
+    def _validate_screen_size(self) -> None:
+        """Checks dimensions and handles failure if too small."""
+        if self._check_fit():
+            self._set_ready(True)
+        else:
+            LOG.error(
+                f"Terminal too small! Area {self._capacity} < Min {self._MIN_SCREEN_AREA}"
+            )
+            self._control.signal_stop()
+            raise SystemExit(1)
 
     def _handle_resize(self) -> None:
         """
@@ -177,13 +188,7 @@ class CursesRenderer:
         self._pixel_buffer.clear()
         self.stdscr.clear()
 
-        if self._check_fit():
-            self._set_ready(True)
-        else:
-            LOG.error("Not enough space to start the application!")
-            # Trigger global shutdown
-            self._control.signal_stop()
-            raise SystemExit(1)
+        self._validate_screen_size()
 
     def _application(self, stdscr: curses.window) -> None:
         """
@@ -201,8 +206,7 @@ class CursesRenderer:
         self._colors_init()
         self._calc_capacity()
 
-        # Signal that we are open for business
-        self._set_ready(True)
+        self._validate_screen_size()
 
         try:
             while not self._control.should_stop():
