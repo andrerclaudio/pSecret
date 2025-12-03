@@ -1,53 +1,56 @@
-class AppControlFlags:
+import threading
+
+
+class RuntimeController:
     """
-    Shared flags used to coordinate application behaviour across threads.
+    Thread-safe coordination class using threading.Events.
 
-    The flags are read and updated by multiple threads to signal when the
-    application should keep running and whether the curses-based view is
-    initialized and ready to be used.
-
-    Attributes:
-        _keep_running (bool): Internal flag indicating if the application
-            should continue executing.
-        _view_ready (bool): Internal flag indicating if the curses view is
-            fully initialized and ready to receive updates.
+    This acts as the "Traffic Cop" for the application, allowing the
+    threads to communicate state without race conditions.
     """
 
     def __init__(self) -> None:
-        self._keep_running: bool = True
-        self._view_ready: bool = False
+        # Event is False by default.
+        self._stop_event: threading.Event = threading.Event()
+        self._view_ready_event: threading.Event = threading.Event()
 
-    @property
-    def keep_running(self) -> bool:
-        """Indicates whether the application should continue running."""
-        return self._keep_running
+    def should_stop(self) -> bool:
+        """Returns True if the application has been signaled to stop."""
+        return self._stop_event.is_set()
 
-    @keep_running.setter
-    def keep_running(self, value: bool) -> None:
+    def signal_stop(self) -> None:
         """
-        Update the running flag.
+        Signals all threads to stop immediately.
 
-        When set to False, cooperative threads should finish their work
-        and shut down gracefully.
+        This sets the internal event flag. Any thread waiting on
+        wait_for_stop() will wake up immediately.
         """
-        self._keep_running = value
+        self._stop_event.set()
 
-    @property
-    def view_ready(self) -> bool:
-        """
-        Indicates whether the curses view is initialized and ready.
+    def is_view_ready(self) -> bool:
+        """Checks if the UI is fully initialized and safe to draw on."""
+        return self._view_ready_event.is_set()
 
-        When False, worker threads should avoid drawing to the screen.
+    def set_view_ready(self, ready: bool = True) -> None:
         """
-        return self._view_ready
-
-    @view_ready.setter
-    def view_ready(self, value: bool) -> None:
-        """
-        Update the view readiness flag.
+        Updates the UI readiness state.
 
         Args:
-            value: True when the curses view has been initialized and is
-                safe to use, False when it is being created or torn down.
+            ready: True if Curses is initialized and sized; False during resizing or shutdown.
         """
-        self._view_ready = value
+        if ready:
+            self._view_ready_event.set()
+        else:
+            self._view_ready_event.clear()
+
+    def wait_for_stop(self, timeout: float) -> bool:
+        """
+        Blocks the calling thread for 'timeout' seconds, OR until stop is signaled.
+
+        This is a 'Smart Sleep'. It replaces time.sleep().
+
+        Returns:
+            True if the stop signal was received (wake up!),
+            False if the timeout expired (continue working).
+        """
+        return self._stop_event.wait(timeout)
