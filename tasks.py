@@ -48,7 +48,7 @@ class PixelSpawner(threading.Thread):
                 # Only attempt to draw if the Curses window is valid.
                 # This prevents drawing while the terminal is resizing or quiting.
                 if self._control.is_view_ready():
-                    self._view.pulse()
+                    self._view.spawn()
 
             LOG.info(f"[{self.name}] Shutdown complete.")
 
