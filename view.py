@@ -64,7 +64,7 @@ class CursesRenderer:
         self.DRAW_INTERVAL: float = 0.05
 
         # Minimum screen area (width * height) required to run
-        self._MIN_SCREEN_AREA = 4
+        self._MIN_SCREEN_AREA = 1996
 
     @property
     def stdscr(self) -> curses.window:
@@ -108,6 +108,7 @@ class CursesRenderer:
         """
         Return a random (x, y) coordinate that is not yet occupied.
         """
+
         # Safety valve: If buffer is full, return (0,0) to prevent
         # the while loop from spinning infinitely.
         if len(self._pixel_buffer) >= self._capacity:
@@ -139,6 +140,7 @@ class CursesRenderer:
         try:
             self.stdscr.addch(y, x, pixel, attrs)
             self._pixel_buffer[key] = (pixel, color)
+
         except curses.error:
             # CURSES QUIRK:
             # Writing to the very bottom-right character of a window often
@@ -147,11 +149,41 @@ class CursesRenderer:
             if (x, y) == (self._screen_width - 1, self._screen_height - 1):
                 self._pixel_buffer[key] = (pixel, color)
 
+    def __print_small_screen_error_msg(self) -> None:
+        """
+        Render a simple error message when the terminal is too small.
+        """
+        message = "Terminal too small."
+
+        # If the message is longer than the screen, truncate.
+        if len(message) > self._screen_width:
+            message = message[: self._screen_width]
+
+        # Center horizontally
+        x = max(0, (self._screen_width - len(message)) // 2)
+
+        # Center vertically
+        y = max(0, self._screen_height // 2)
+
+        attrs = curses.color_pair(PixelColor.WHITE.value)
+
+        try:
+            self.stdscr.addstr(
+                y,
+                x,
+                message,
+                attrs,
+            )
+
+        except curses.error:
+            pass  # ignore bottom-right curses glitch
+
     def _reset_screen(self) -> None:
         """
         Clears the drawing area and resets counters.
         Called when screen fills up or resizes.
         """
+
         # Pause background drawing
         self._set_ready(False)
 
@@ -161,20 +193,15 @@ class CursesRenderer:
         # Resume background drawing
         self._set_ready(True)
 
-    def _check_fit(self) -> bool:
-        """Validates if the screen is large enough to run."""
-        return self._capacity > self._MIN_SCREEN_AREA
-
     def _validate_screen_size(self) -> None:
         """Checks dimensions and handles failure if too small."""
-        if self._check_fit():
+
+        # Validates if the screen is large enough to run.
+        if self._capacity > self._MIN_SCREEN_AREA:
             self._set_ready(True)
+
         else:
-            LOG.error(
-                f"Terminal too small! Area {self._capacity} < Min {self._MIN_SCREEN_AREA}"
-            )
-            self._control.signal_stop()
-            raise SystemExit(1)
+            self.__print_small_screen_error_msg()
 
     def _handle_resize(self) -> None:
         """
@@ -232,6 +259,7 @@ class CursesRenderer:
         except KeyboardInterrupt:
             # Handle Ctrl+C gracefully
             pass
+
         finally:
             # Ensure background threads stop trying to draw
             self._set_ready(False)
@@ -241,6 +269,7 @@ class CursesRenderer:
         """Entry point to start the Curses wrapper."""
         try:
             curses.wrapper(self._application)
+
         except curses.error as exc:
             LOG.error(f"[curses] initialization error: {exc}")
             self._control.signal_stop()

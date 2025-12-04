@@ -14,10 +14,7 @@ from tasks import PixelSpawner
 from view import CursesRenderer
 
 logging.basicConfig(
-    filename="logs.log",
-    filemode="a",  # Append mode
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s]: %(message)s",
+    level=logging.ERROR, format="%(asctime)s [%(levelname)s]: %(message)s"
 )
 
 LOG = logging.getLogger(__name__)
