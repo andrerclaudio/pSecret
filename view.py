@@ -5,6 +5,7 @@ import curses
 import logging
 import os
 import random
+import secrets
 import string
 import time
 from enum import Enum
@@ -68,6 +69,9 @@ class CursesRenderer:
         self._screen_width: int = 0
         self._capacity: int = 0
 
+        # A pre-shuffled list of all available (x, y) spots
+        self._available_coords: List[Tuple[int, int]] = []
+
         # Shared control flags
         self._control: RuntimeController = control
 
@@ -103,11 +107,11 @@ class CursesRenderer:
 
     @staticmethod
     def _get_color() -> PixelColor:
-        return random.choice(list(PixelColor))
+        return secrets.choice(list(PixelColor))
 
     @staticmethod
     def _get_pixel() -> str:
-        return random.choice(PRINTABLES)
+        return secrets.choice(PRINTABLES)
 
     @staticmethod
     def _colors_init() -> None:
@@ -128,27 +132,31 @@ class CursesRenderer:
         self._control.set_view_ready(is_ready)
 
     def _calc_capacity(self) -> None:
-        """Stores screen dimensions and max pixel capacity."""
+        """Stores screen dimensions, max pixel capacity, and pre-calculates coordinates."""
         self._screen_height, self._screen_width = self.stdscr.getmaxyx()
         self._capacity = self._screen_height * self._screen_width
 
+        # Generate a list of ALL possible coordinates: [(0,0), (0,1), ... (w,h)]
+        self._available_coords = [
+            (x, y)
+            for y in range(self._screen_height)
+            for x in range(self._screen_width)
+        ]
+
+        # Shuffle them immediately using SystemRandom (strongest shuffle)
+        # This ensures the "filling" pattern is completely unpredictable.
+        random.SystemRandom().shuffle(self._available_coords)
+
     def _get_coordinates(self) -> Tuple[int, int]:
         """
-        Return a random (x, y) coordinate that is not yet occupied.
+        Pop a random coordinate from the pre-shuffled list.
         """
-
-        # Safety valve: If buffer is full, return (0,0) to prevent
-        # the while loop from spinning infinitely.
-        if len(self._pixel_buffer) >= self._capacity:
+        if not self._available_coords:
+            # If empty, return dummy data
             return 0, 0
 
-        while True:
-            y: int = random.randrange(self._screen_height)
-            x: int = random.randrange(self._screen_width)
-
-            # Collision check
-            if (x, y) not in self._pixel_buffer:
-                return x, y
+        # O(1) operation to get a unique
+        return self._available_coords.pop()
 
     def _draw_pixel(self, pixel: str, color: PixelColor, x: int, y: int) -> None:
         """Draws a pixel to the screen and updates the internal buffer."""
@@ -200,6 +208,10 @@ class CursesRenderer:
         self._set_ready(False)
         self._pixel_buffer.clear()
         self.stdscr.clear()
+
+        # Re-calculate/Re-shuffle coordinates for the new round
+        self._calc_capacity()
+
         self._sort_cursor = 0
         self._spawn_state = SpawnState.DRAWING.value
         self._set_ready(True)
